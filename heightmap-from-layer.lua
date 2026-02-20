@@ -1,7 +1,8 @@
--- Generate a height map layer from the active layer using distance field (pillow emboss).
--- Opaque pixels are assigned a height based on their distance to the nearest edge/transparent pixel.
--- Interior pixels = white (high), edge pixels = black (low), transparent pixels = transparent.
--- Designed for use as input to normal map generation.
+-- Generate a height map layer from the active layer using distance field (pillow emboss)
+-- blended with source pixel luminance.
+-- Distance field: interior = white (high), edge = black (low).
+-- Luminance: bright source pixels = high, dark source pixels = low.
+-- The blend ratio is user-controlled. Designed for use as input to normal map generation.
 
 local spr = app.activeSprite
 if not spr then
@@ -31,6 +32,24 @@ if not cel then
   app.alert("No cel on the active layer/frame.")
   return
 end
+
+-- Show dialog for blend control
+local dlg = Dialog("Height Map from Layer")
+dlg:slider{
+  id = "luminance_blend",
+  label = "Luminance blend %",
+  min = 0,
+  max = 100,
+  value = 30
+}
+dlg:button{ id = "ok", text = "Generate" }
+dlg:button{ id = "cancel", text = "Cancel" }
+dlg:show()
+
+if not dlg.data.ok then return end
+
+local luminanceBlend = dlg.data.luminance_blend / 100.0
+local distBlend = 1.0 - luminanceBlend
 
 local srcImg = cel.image
 local celPos = cel.position
@@ -132,13 +151,27 @@ local hmImg = Image(w, h, ColorMode.RGB)
 for y = 0, h - 1 do
   for x = 0, w - 1 do
     if opaque[y][x] then
+      -- Distance field component (0..255)
       local d = dist[y][x]
-      local v
+      local distVal
       if maxDist == 0 then
-        v = 255
+        distVal = 255
       else
-        v = math.floor((d / maxDist) * 255 + 0.5)
+        distVal = (d / maxDist) * 255
       end
+
+      -- Luminance component: perceived brightness of the source pixel
+      -- Uses standard Rec. 709 coefficients
+      local px = srcImg:getPixel(x, y)
+      local r = app.pixelColor.rgbaR(px)
+      local g = app.pixelColor.rgbaG(px)
+      local b = app.pixelColor.rgbaB(px)
+      local lumVal = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+      -- Blend: distBlend * distanceField + luminanceBlend * luminance
+      local v = math.floor(distBlend * distVal + luminanceBlend * lumVal + 0.5)
+      v = math.max(0, math.min(255, v))
+
       hmImg:drawPixel(x, y, app.pixelColor.rgba(v, v, v, 255))
     else
       hmImg:drawPixel(x, y, app.pixelColor.rgba(0, 0, 0, 0))
